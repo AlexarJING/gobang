@@ -1,4 +1,6 @@
+io.stdout:setvbuf("no")
 love.window.setMode(600,600)
+love.window.setTitle("五子棋")
 local game = {}
 game.turnLimit = 10
 game.boardX = 20
@@ -9,7 +11,7 @@ function game.newPlayer(aiPath,color)
 		timer = 0,
 		steps = {},
 		color = color,
-		aiPath = aiPath
+		aiPath = aiPath,
 	}
 	return player
 end
@@ -48,18 +50,27 @@ end
 function game.set(x,y)
 	if game.board[x][y] == 0 then
 		game.board[x][y] = game.currentPlayer.color
+		game.lastPlayedX = x
+		game.lastPlayedY = y
 	else
-		error("wrong position")
+		print("wrong position")
 	end
+	if game.checkForbidden() then
+		game.board[x][y] = 0
+		love.window.showMessageBox("禁手", "黑方禁止双活三", "error")
+		print("forbidden")
+		return
+	end
+	return true
 end
 
 
 
 function game.lineCount(x,y,dx,dy)
 	local color = game.board[x][y]
-	if color == 0 then return end
+	if color == 0 then return 0 end
 	local count = 0
-	for i = 0, 10 do
+	for i = 0, 4 do
 		if game.board[x+dx*i] 
 			and game.board[x+dx*i][y+dy*i] 
 			and color == game.board[x+dx*i][y+dy*i] then
@@ -68,41 +79,89 @@ function game.lineCount(x,y,dx,dy)
 			return count
 		end
 	end
-
-	return count>=5
+	return count
 end
+
+
 
 function game.checkWin()
 	for x = 1, 15 do
 		for y = 1, 15 do
-			if game.lineCount(x,y,-1,-1) or
-				game.lineCount(x,y,-1,0) or
-				game.lineCount(x,y,-1,1) or
-				game.lineCount(x,y,0,-1) or
-				game.lineCount(x,y,0,1) or
-				game.lineCount(x,y,1,-1) or
-				game.lineCount(x,y,1,0) or
-				game.lineCount(x,y,1,1) then
-				print("player ".. (game.currentPlayer.color == 1 and "white" or "black") .." wins")
+			if game.lineCount(x,y,1,1)>=5 or
+				game.lineCount(x,y,1,0)>=5 or
+				game.lineCount(x,y,0,1)>=5 or 
+				game.lineCount(x,y,-1,1)>=5 then
 				return true
 			end
 		end
 	end
 end
 
+local liveThree = {false,true,true,true,false}
+
+function game.match(x,y,dx,dy,color,pattern)
+	if dx == 0 and dy == 0 then
+		return game.match(x,y,1,0,color,pattern) 
+			or game.match(x,y,1,1,color,pattern) 
+			or game.match(x,y,0,1,color,pattern) 
+	end
+	for i = -2,2 do
+		local targetColor = pattern[i+3] and color or 0
+		if game.board[x+dx*i] and game.board[x+dx*i][y+dy*i] 
+			and game.board[x+dx*i][y+dy*i] == targetColor then
+			--match
+		else
+			return
+		end
+	end
+	return true
+end
+
+function game.liveThree(x,y)
+	local color = game.currentPlayer.color
+	local count = 0
+	for dx = -1, 1 do
+		for dy = -1,1 do			
+			if game.match(x+dx,y+dy,dx,dy,color,liveThree) then
+				count = count + 1
+			end
+			if count == 2 then
+				return true
+			end
+		end
+	end
+end
+
+function game.checkForbidden()
+	if game.currentPlayer == game.black then
+		local x,y = game.lastPlayedX,game.lastPlayedY
+		if game.liveThree(x,y) then
+			return true
+		end
+	end
+end
+
+function game.initAI()
+	game.currentPlayer.ai =  love.thread.newThread(game.currentPlayer.aiPath)
+	game.currentPlayer.ai:start()
+	for i = 1,15 do
+		local gridChannel = love.thread.getChannel("grid"..i)
+		gridChannel:push(game.board[i])
+	end
+	local colorChannel = love.thread.getChannel("color")
+	colorChannel:push(game.currentPlayer.color)
+	game.result = love.thread.getChannel("result")
+	local lastPlayed = love.thread.getChannel("lastPlayed")
+	lastPlayed:push({game.lastPlayedX,game.lastPlayedY})
+end
+
 function game.turnEnd()
 	game.turnTimer = game.turnLimit
 	game.currentPlayer = game.currentPlayer == game.player1 and game.player2 or game.player1
-	if game.currentPlayer.aiPath then
-		game.currentAI =  love.thread.newThread(game.currentPlayer.aiPath)
-		game.currentAI:start()
-		for i = 1,15 do
-			local gridChannel = love.thread.getChannel("grid"..i)
-			gridChannel:supply(game.board[i])
-		end
-		local colorChannel = love.thread.getChannel("color")
+	if game.currentPlayer.aiPath then	
+		game.initAI()
 	end
-	--game.checkWin()
+	if game.checkWin() then game.gameover() end
 end
 
 function game.process(dt)
@@ -110,11 +169,16 @@ function game.process(dt)
 	if game.turnTimer<0 then
 		game.turnEnd()
 	else
-		--[[
-		local x,y = game.currentPlayer.ai.calculate(game.board)
-		if x and game.set(x,y) then	
-			game.turnEnd()
-		end]]
+		if game.currentPlayer.aiPath then
+			if game.currentPlayer.ai then
+				local x = game.result:peek()
+				if x and game.set(game.result:pop(),game.result:pop()) then
+					game.turnEnd()
+				end
+			else
+				game.initAI()
+			end		
+		end
 	end
 	game.currentPlayer.timer = game.currentPlayer.timer + dt
 end
@@ -153,6 +217,18 @@ function game.draw()
 	love.graphics.circle("fill",game.mx,game.my,game.gridSize/2)
 end
 
+function game.gameover()
+	local title = "游戏结束"
+	local message = "player ".. (game.currentPlayer.color == -1 and "white" or "black") .." wins"
+	local buttons = {"重新开始", "退出", escapebutton = 2}
+	local pressedbutton = love.window.showMessageBox(title, message, buttons)
+	if pressedbutton == 1 then
+	    game.initGame("player1.lua")
+	elseif pressedbutton == 2 then
+	    love.event.quit()
+	end
+end
+
 function love.load()
 	love.graphics.setBackgroundColor(100,100,100)
 	game.initGame("player1.lua")
@@ -174,8 +250,9 @@ function love.draw()
 end
 
 function love.mousepressed()
-	if game.board[game.gx][game.gy] == 0 then
-		game.board[game.gx][game.gy] = game.currentPlayer.color
-		game.turnEnd()
+	if game.board[game.gx][game.gy] == 0 and not game.currentPlayer.ai then
+		if game.set(game.gx,game.gy) then
+			game.turnEnd()
+		end
 	end
 end
