@@ -180,9 +180,13 @@ function game.process(dt)
 	else
 		if game.currentPlayer.aiPath then
 			if game.currentPlayer.ai then
-				local x = game.result:peek()
-				if x and game.set(game.result:pop(),game.result:pop()) then
-					game.turnEnd()
+				local x = game.result:getCount()
+				if x>=1 then
+					while x>1 do game.result:pop() end
+					_=game.result:pop()
+					if game.set(_.x,_.y) then
+						game.turnEnd()
+					end
 				end
 			else
 				game.initAI()
