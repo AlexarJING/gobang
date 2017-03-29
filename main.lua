@@ -182,7 +182,7 @@ function game.process(dt)
 			if game.currentPlayer.ai then
 				local x = game.result:getCount()
 				if x>=1 then
-					while x>1 do game.result:pop() end
+					while game.result:getCount()>1 do game.result:pop() end
 					_=game.result:pop()
 					if game.set(_.x,_.y) then
 						game.turnEnd()
