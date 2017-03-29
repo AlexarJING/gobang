@@ -80,8 +80,7 @@ local function testAll()
 		end
 	end
 	table.sort(all,function(a,b) return a.result>b.result end)
-	result:push(all[1].x)
-	result:push(all[1].y)
+	result:push(all[1])
 end
 
 testAll()
