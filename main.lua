@@ -1,17 +1,19 @@
 io.stdout:setvbuf("no")
+local suit = require "suit"
 love.window.setMode(600,600)
 love.window.setTitle("五子棋")
 local game = {}
-game.turnLimit = 10
+game.turnLimit = 20
 game.boardX = 20
 game.boardY = 20
 game.gridSize = 40
 function game.newPlayer(aiPath,color)
+	if aiPath == "manual" then aiPath = nil end
 	local player = {
 		timer = 0,
 		steps = {},
 		color = color,
-		aiPath = aiPath,
+		aiPath = aiPath and "ai/"..aiPath,
 	}
 	return player
 end
@@ -36,10 +38,12 @@ function game.chooseColor()
 	local rnd = love.math.random()
 	if rnd<0.5 then
 		game.black = game.player1
+		game.white = game.player2
 		game.player1.color = -1
 		game.player2.color = 1
 	else
 		game.black = game.player2
+		game.white = game.player1
 		game.player2.color = -1
 		game.player1.color = 1
 	end
@@ -49,18 +53,24 @@ end
 
 function game.set(x,y)
 	if game.board[x][y] == 0 then
-		game.board[x][y] = game.currentPlayer.color
-		game.lastPlayedX = x
-		game.lastPlayedY = y
+		if game.checkForbidden(x,y) then
+			love.window.showMessageBox("禁手", "黑方禁止双活三", "error")
+			print("forbidden")
+			return
+		else
+			game.board[x][y] = game.currentPlayer.color
+			game.lastPlayedX = x
+			game.lastPlayedY = y
+			table.insert(game.step, {
+				x = x,
+				y = y,
+				color = game.currentPlayer.color
+				})
+		end		
 	else
 		print("wrong position")
 	end
-	if game.checkForbidden() then
-		game.board[x][y] = 0
-		love.window.showMessageBox("禁手", "黑方禁止双活三", "error")
-		print("forbidden")
-		return
-	end
+	
 	return true
 end
 
@@ -132,10 +142,9 @@ function game.liveThree(x,y)
 	end
 end
 
-function game.checkForbidden()
+function game.checkForbidden(tx,ty)
 	if game.currentPlayer == game.black then
-		local x,y = game.lastPlayedX,game.lastPlayedY
-		if game.liveThree(x,y) then
+		if game.liveThree(tx,ty) then
 			return true
 		end
 	end
@@ -184,6 +193,8 @@ function game.process(dt)
 end
 
 function game.initGame(p1path,p2path)
+	love.graphics.setBackgroundColor(100,100,100)
+	game.step = {}
 	game.turnTimer = game.turnLimit
 	game.clearBoard()
 	game.initPlayer(p1path,p2path)
@@ -215,6 +226,21 @@ function game.draw()
 	local c = game.currentPlayer.color == -1 and 0 or 255
 	love.graphics.setColor(c,c,c,100)
 	love.graphics.circle("fill",game.mx,game.my,game.gridSize/2)
+	if game.lastPlayedX then
+		love.graphics.setColor(0,255,0,100)
+		love.graphics.rectangle("line",
+			game.boardY+game.gridSize*(game.lastPlayedX-1)-game.gridSize/2,
+			game.boardY+game.gridSize*(game.lastPlayedY-1)-game.gridSize/2,
+			game.gridSize,game.gridSize)
+	end
+
+	for i, step in ipairs(game.step) do
+		local color = step.color == -1 and 255 or 0
+		love.graphics.setColor(color,color,color,255)
+		love.graphics.print(i, 
+			game.boardY+game.gridSize*(step.x-1)-5,
+			game.boardY+game.gridSize*(step.y-1)-5)
+	end
 end
 
 function game.gameover()
@@ -229,30 +255,80 @@ function game.gameover()
 	end
 end
 
+
+
 function love.load()
-	love.graphics.setBackgroundColor(100,100,100)
-	game.initGame("player1.lua")
+	game.aiLibrary ={}
+	game.aiLibrary[0] = "manual"
+	for _,name in ipairs(love.filesystem.getDirectoryItems("ai")) do
+        table.insert(game.aiLibrary,name)
+    end
+    game.p1Ctrl = game.aiLibrary[0]
+    game.p2Ctrl = game.aiLibrary[0]
 end
 
+function game.ui()
+	suit.Label("player1:"..game.p1Ctrl,50,50,200,30)
+	for i = 0, #game.aiLibrary do
+		local aiFile = suit.Button(game.aiLibrary[i],{id = "p1"..i},100,100+50*i,100,30)
+		if aiFile.hit then
+			game.p1Ctrl = game.aiLibrary[i]
+		end
+	end
+
+	suit.Label("player2:"..game.p2Ctrl,350,50,200,30)
+	for i = 0, #game.aiLibrary do
+		local aiFile = suit.Button(game.aiLibrary[i],{id = "p2"..i},400,100+50*i,100,30)
+		if aiFile.hit then
+			game.p2Ctrl = game.aiLibrary[i]
+		end
+	end
+
+	local startButton = suit.Button("start",250,500,100,30)
+	if startButton.hit then
+		game.initGame(game.p1Ctrl,game.p2Ctrl)
+		game.start = true
+	end
+end
+
+
 function love.update(dt)
-	game.process(dt)
-	local mx,my = love.mouse.getPosition()
-	
+	local mx,my = love.mouse.getPosition()	
 	game.gx = math.ceil((mx-game.boardX+ game.gridSize/2)/game.gridSize)
 	game.gy = math.ceil((my-game.boardY+ game.gridSize/2)/game.gridSize)
 
 	game.mx = game.gx*game.gridSize - game.gridSize/2
 	game.my = game.gy*game.gridSize - game.gridSize/2
+	if game.start then
+		game.process(dt)
+		local title = string.format("五子棋，黑方：%s, 白方：%s, 落子倒计时：%d",
+			game.black.aiPath or "玩家", game.white.aiPath or "玩家", game.turnTimer)
+		love.window.setTitle(title)
+	else
+		game.ui()
+	end
 end
 
 function love.draw()
-	game.draw()
+	if game.start then
+		game.draw()
+	end
+	suit.draw()
 end
 
 function love.mousepressed()
+	if not game.start then return end
 	if game.board[game.gx][game.gy] == 0 and not game.currentPlayer.ai then
 		if game.set(game.gx,game.gy) then
 			game.turnEnd()
 		end
 	end
+end
+
+function love.textinput(t)
+    suit.textinput(t)  
+end
+
+function love.keypressed(key)
+    suit.keypressed(key)    
 end
